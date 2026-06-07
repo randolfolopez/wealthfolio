@@ -766,7 +766,7 @@ function PlannerResult({
         <button
           type="button"
           onClick={onReview}
-          className="mt-4 inline-flex w-fit items-center gap-1 font-mono text-xs font-medium text-[#2f6b46] underline-offset-4 hover:underline dark:text-emerald-400 sm:mt-3"
+          className="mt-4 inline-flex w-fit items-center gap-1 font-mono text-xs font-medium text-[#2f6b46] underline-offset-4 hover:underline sm:mt-3 dark:text-emerald-400"
         >
           Review {tradesWord} <Icons.ArrowRight className="h-3.5 w-3.5" />
         </button>
@@ -1007,7 +1007,7 @@ function TradesTable({ trades, currency }: { trades: SuggestedManualTrade[]; cur
 
   return (
     <>
-      <div className="divide-border md:hidden divide-y">
+      <div className="divide-border divide-y md:hidden">
         {trades.map((t, i) => (
           <div key={i} className="px-4 py-3">
             <div className="flex items-start justify-between gap-3">
@@ -1018,7 +1018,9 @@ function TradesTable({ trades, currency }: { trades: SuggestedManualTrade[]; cur
                     {t.symbol ?? "Trade"}
                   </span>
                 </div>
-                {t.name && <div className="text-muted-foreground mt-1 truncate text-xs">{t.name}</div>}
+                {t.name && (
+                  <div className="text-muted-foreground mt-1 truncate text-xs">{t.name}</div>
+                )}
                 <div className="text-muted-foreground mt-1 font-mono text-xs">{t.categoryName}</div>
               </div>
               <div className="shrink-0 text-right">
@@ -1082,10 +1084,7 @@ function TradesTable({ trades, currency }: { trades: SuggestedManualTrade[]; cur
           </thead>
           <tbody>
             {trades.map((t, i) => (
-              <tr
-                key={i}
-                className="border-border hover:bg-muted/30 h-12 border-b last:border-b-0"
-              >
+              <tr key={i} className="border-border hover:bg-muted/30 h-12 border-b last:border-b-0">
                 <td className="pl-5 pr-2">
                   <TradeActionBadge action={t.action} />
                 </td>
@@ -1126,8 +1125,7 @@ function TradesTable({ trades, currency }: { trades: SuggestedManualTrade[]; cur
             <tr className="text-xs">
               <td colSpan={3} className="text-muted-foreground py-3 pl-5 font-mono">
                 {buys.length} buy{buys.length !== 1 ? "s" : ""}
-                {sells.length > 0 &&
-                  ` · ${sells.length} sell${sells.length !== 1 ? "s" : ""}`}
+                {sells.length > 0 && ` · ${sells.length} sell${sells.length !== 1 ? "s" : ""}`}
               </td>
               <td className="text-foreground py-3 pr-3 text-right font-semibold tabular-nums">
                 {formatAmount(buyTotal, currency)}

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clearActivityUrlDateFilters,
   clearActivityUrlFilters,
+  clearActivityUrlTypeFilters,
   resolveActivityTabFromUrlFilters,
   resolveActivityUrlFilters,
 } from "./url-filters";
@@ -80,6 +81,18 @@ describe("resolveActivityUrlFilters", () => {
 
     expect(cleared.toString()).toBe(
       "tab=investments&account=acct-1&needsReview=true&types=TRANSFER_IN",
+    );
+  });
+
+  it("clears only type params when replacing investment type filter", () => {
+    const cleared = clearActivityUrlTypeFilters(
+      new URLSearchParams(
+        "tab=investments&account=acct-1&needsReview=true&types=TRANSFER_IN&from=2026-06-01&to=2026-06-04",
+      ),
+    );
+
+    expect(cleared.toString()).toBe(
+      "tab=investments&account=acct-1&needsReview=true&from=2026-06-01&to=2026-06-04",
     );
   });
 });

@@ -8,9 +8,8 @@ import type { SpendingEvent } from "../types/event";
 import { EventsCard } from "./events-card";
 
 vi.mock("@tanstack/react-query", async () => {
-  const actual = await vi.importActual<typeof import("@tanstack/react-query")>(
-    "@tanstack/react-query",
-  );
+  const actual =
+    await vi.importActual<typeof import("@tanstack/react-query")>("@tanstack/react-query");
   return {
     ...actual,
     useQueries: vi.fn(() => []),

@@ -38,6 +38,7 @@ import { useActivitySearch, type ActivityStatusFilter } from "./hooks/use-activi
 import {
   clearActivityUrlDateFilters,
   clearActivityUrlFilters,
+  clearActivityUrlTypeFilters,
   resolveActivityTabFromUrlFilters,
   resolveActivityUrlFilters,
 } from "./utils/url-filters";
@@ -133,7 +134,8 @@ const ActivityPage = () => {
   const statusFilter = activityUrlFilters.statusFilter ?? persistedStatusFilter;
   // Health Center deeplinks can scope the list to specific activity types / a date
   // window (e.g. transfers around an incomplete-transfer issue). URL wins over persisted.
-  const effectiveActivityTypes = activityUrlFilters.activityTypes ?? selectedActivityTypes;
+  const urlActivityTypes = activityUrlFilters.activityTypes;
+  const effectiveActivityTypes = urlActivityTypes ?? selectedActivityTypes;
   const urlDateFrom = activityUrlFilters.dateFrom;
   const urlDateTo = activityUrlFilters.dateTo;
   const effectiveDateFrom = urlDateFrom ?? selectedDateRange.from;
@@ -199,6 +201,22 @@ const ActivityPage = () => {
       }
     },
     [setSearchParams, setSelectedDateRange, urlDateFrom, urlDateTo],
+  );
+
+  const setInvestmentActivityTypes = useCallback(
+    (types: ActivityType[]) => {
+      setSelectedActivityTypes(types);
+      if (urlActivityTypes) {
+        setSearchParams(
+          (prev) => {
+            const next = clearActivityUrlTypeFilters(prev);
+            return next.toString() === prev.toString() ? prev : next;
+          },
+          { replace: true },
+        );
+      }
+    },
+    [setSearchParams, setSelectedActivityTypes, urlActivityTypes],
   );
 
   // Coerce "spending" URL state back to investments when the module is disabled.
@@ -478,7 +496,7 @@ const ActivityPage = () => {
 
   const investmentsFiltersActive =
     accountScope.type !== "all" ||
-    selectedActivityTypes.length > 0 ||
+    effectiveActivityTypes.length > 0 ||
     selectedInstrumentTypes.length > 0 ||
     statusFilter !== "all" ||
     !!effectiveDateFrom ||
@@ -643,8 +661,8 @@ const ActivityPage = () => {
           onSearchQueryChange={handleSearchChange}
           accountScope={accountScope}
           onAccountScopeChange={setAccountScope}
-          selectedActivityTypes={selectedActivityTypes}
-          onActivityTypesChange={setSelectedActivityTypes}
+          selectedActivityTypes={effectiveActivityTypes}
+          onActivityTypesChange={setInvestmentActivityTypes}
           dateRange={effectiveDateRange}
           onDateRangeChange={setInvestmentDateRange}
           isCompactView={isCompactView}
@@ -658,8 +676,8 @@ const ActivityPage = () => {
           onSearchQueryChange={handleSearchChange}
           accountScope={accountScope}
           onAccountScopeChange={setAccountScope}
-          selectedActivityTypes={selectedActivityTypes}
-          onActivityTypesChange={setSelectedActivityTypes}
+          selectedActivityTypes={effectiveActivityTypes}
+          onActivityTypesChange={setInvestmentActivityTypes}
           selectedInstrumentTypes={selectedInstrumentTypes}
           onInstrumentTypesChange={setSelectedInstrumentTypes}
           statusFilter={statusFilter}

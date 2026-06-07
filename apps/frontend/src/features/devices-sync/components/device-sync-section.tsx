@@ -104,6 +104,7 @@ export function DeviceSyncSection() {
   const [isBackingUpBeforeBootstrap, setIsBackingUpBeforeBootstrap] = useState(false);
   const [isUploadingSnapshot, setIsUploadingSnapshot] = useState(false);
   const [bootstrapOwner, setBootstrapOwner] = useState<BootstrapOwner>("none");
+  const [suppressReadyStateBootstrapPrompt, setSuppressReadyStateBootstrapPrompt] = useState(false);
 
   // Bootstrap overwrite state — set when bootstrapSync returns overwrite_required
   const [overwriteRisk, setOverwriteRisk] = useState<{
@@ -116,6 +117,7 @@ export function DeviceSyncSection() {
   const bootstrapOwnerRef = useRef<BootstrapOwner>(bootstrapOwner);
   const isPairingOpenRef = useRef(isPairingOpen);
   const isCurrentDeviceTrustedRef = useRef(isCurrentDeviceTrusted);
+  const suppressReadyStateBootstrapPromptRef = useRef(suppressReadyStateBootstrapPrompt);
 
   useEffect(() => {
     bootstrapOwnerRef.current = bootstrapOwner;
@@ -129,11 +131,16 @@ export function DeviceSyncSection() {
     isCurrentDeviceTrustedRef.current = isCurrentDeviceTrusted;
   }, [isCurrentDeviceTrusted]);
 
-  const canRunReadyStateBootstrap = useCallback(() => {
+  useEffect(() => {
+    suppressReadyStateBootstrapPromptRef.current = suppressReadyStateBootstrapPrompt;
+  }, [suppressReadyStateBootstrapPrompt]);
+
+  const canRunReadyStateBootstrap = useCallback((ignorePromptSuppression = false) => {
     return (
       bootstrapOwnerRef.current === "none" &&
       !isPairingOpenRef.current &&
-      isCurrentDeviceTrustedRef.current
+      isCurrentDeviceTrustedRef.current &&
+      (ignorePromptSuppression || !suppressReadyStateBootstrapPromptRef.current)
     );
   }, []);
 
@@ -176,6 +183,9 @@ export function DeviceSyncSection() {
   );
 
   const handlePairingComplete = useCallback(() => {
+    setSuppressReadyStateBootstrapPrompt(true);
+    setShowBootstrapOverwriteDialog(false);
+    setOverwriteRisk(null);
     setBootstrapOwner((owner) =>
       owner === "pairing" || owner === "pairing_failed" ? "none" : owner,
     );
@@ -323,13 +333,16 @@ export function DeviceSyncSection() {
   );
 
   const runBootstrapCheck = useCallback(
-    async (showToast: boolean, autoOpenDialog = false) => {
-      if (!canRunReadyStateBootstrap()) return;
+    async (showToast: boolean, autoOpenDialog = false, ignorePromptSuppression = false) => {
+      if (!canRunReadyStateBootstrap(ignorePromptSuppression)) return;
 
       try {
         const result = await actions.bootstrapSync.mutateAsync({ allowOverwrite: false });
-        if (!canRunReadyStateBootstrap()) return;
+        if (!canRunReadyStateBootstrap(ignorePromptSuppression)) return;
         if (result.status === "overwrite_required") {
+          if (ignorePromptSuppression) {
+            setSuppressReadyStateBootstrapPrompt(false);
+          }
           setOverwriteRisk({
             localRows: result.localRows,
             nonEmptyTables: result.nonEmptyTables,
@@ -374,7 +387,8 @@ export function DeviceSyncSection() {
   );
 
   const handleRetryBootstrap = useCallback(async () => {
-    await runBootstrapCheck(true);
+    setSuppressReadyStateBootstrapPrompt(false);
+    await runBootstrapCheck(true, true, true);
   }, [runBootstrapCheck]);
 
   const handleUploadSnapshotNow = useCallback(async () => {
@@ -509,6 +523,26 @@ export function DeviceSyncSection() {
     overwriteRisk,
     isPairingOpen,
     runBootstrapCheck,
+  ]);
+
+  useEffect(() => {
+    if (!suppressReadyStateBootstrapPrompt) return;
+    if (status.engineIsFetching || !status.engineStatus) return;
+
+    const engineNeedsBootstrap =
+      status.engineStatus.lastCycleStatus === "wait_snapshot" ||
+      status.engineStatus.lastCycleStatus === "stale_cursor" ||
+      status.engineStatus.bootstrapRequired === true;
+
+    if (!engineNeedsBootstrap) {
+      setSuppressReadyStateBootstrapPrompt(false);
+    }
+  }, [
+    suppressReadyStateBootstrapPrompt,
+    status.engineIsFetching,
+    status.engineStatus?.lastCycleStatus,
+    status.engineStatus?.bootstrapRequired,
+    status.engineStatus,
   ]);
 
   // Loading state (detecting)

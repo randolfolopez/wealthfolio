@@ -151,6 +151,16 @@ const ROWS_WITH_USER_SYNCABLE_ACTIVITY_FILTER_SQL: &str = "\
                AND (source_record_id IS NULL OR TRIM(source_record_id) = ''))
     )";
 
+const OVERWRITE_RISK_ACTIVITY_TAXONOMY_ASSIGNMENTS_FILTER_SQL: &str = "\
+    UPPER(COALESCE(source, '')) = 'MANUAL'
+    OR activity_id IN (
+        SELECT id FROM activities
+        WHERE UPPER(COALESCE(source_system, '')) IN ('MANUAL', 'CSV')
+           OR ((source_system IS NULL OR TRIM(source_system) = '')
+               AND (import_run_id IS NULL OR TRIM(import_run_id) = '')
+               AND (source_record_id IS NULL OR TRIM(source_record_id) = ''))
+    )";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyncRowFilter {
     UserSyncableHoldingsSnapshots,
@@ -158,7 +168,8 @@ enum SyncRowFilter {
     ManualQuotes,
     UserImportRuns,
     UserSyncableActivities,
-    UserImportTemplates,
+    OverwriteRiskImportTemplates,
+    OverwriteRiskImportAccountTemplates,
     SpendingSettings,
     SpendingSettingsOverwriteRisk,
     UserTaxonomies,
@@ -174,6 +185,7 @@ enum SyncRowFilter {
     OverwriteRiskAssets,
     ValidPortfolioAccounts,
     RowsWithUserSyncableActivity,
+    OverwriteRiskActivityTaxonomyAssignments,
 }
 
 impl SyncRowFilter {
@@ -194,7 +206,13 @@ impl SyncRowFilter {
                 "UPPER(run_type) = 'IMPORT' AND UPPER(source_system) IN ('CSV', 'MANUAL')"
             }
             Self::UserSyncableActivities => USER_SYNCABLE_ACTIVITIES_FILTER_SQL,
-            Self::UserImportTemplates => "UPPER(scope) != 'SYSTEM'",
+            Self::OverwriteRiskImportTemplates => {
+                "UPPER(scope) != 'SYSTEM' AND UPPER(kind) != 'BROKER_ACTIVITY'"
+            }
+            Self::OverwriteRiskImportAccountTemplates => {
+                "UPPER(context_kind) != 'BROKER_ACTIVITY' \
+                 AND UPPER(COALESCE(source_system, '')) IN ('', 'CSV', 'MANUAL')"
+            }
             Self::SpendingSettings => "setting_key IN ('spending.enabled', 'spending.account_ids')",
             Self::SpendingSettingsOverwriteRisk => {
                 "setting_key = 'spending.account_ids' \
@@ -254,6 +272,9 @@ impl SyncRowFilter {
                 "account_id IN (SELECT id FROM accounts) AND portfolio_id IN (SELECT id FROM portfolios)"
             }
             Self::RowsWithUserSyncableActivity => ROWS_WITH_USER_SYNCABLE_ACTIVITY_FILTER_SQL,
+            Self::OverwriteRiskActivityTaxonomyAssignments => {
+                OVERWRITE_RISK_ACTIVITY_TAXONOMY_ASSIGNMENTS_FILTER_SQL
+            }
         }
     }
 }
@@ -271,14 +292,12 @@ const OVERWRITE_RISK_UNFILTERED_TABLES: &[&str] = &[
     "ai_messages",
     "ai_thread_tags",
     "contribution_limits",
-    "activity_taxonomy_assignments",
     "spending_activity_events",
     "spending_categorization_rules",
     "spending_preset_rule_deletions",
     "spending_events",
     "budget_targets",
     "budget_rollover_settings",
-    "import_account_templates",
     "asset_taxonomy_assignments",
     "goals_allocation",
     "allocation_targets",
@@ -312,7 +331,15 @@ const OVERWRITE_RISK_FILTERED_TABLES: &[SyncTableFilterSpec] = &[
     },
     SyncTableFilterSpec {
         table: "import_templates",
-        filter: SyncRowFilter::UserImportTemplates,
+        filter: SyncRowFilter::OverwriteRiskImportTemplates,
+    },
+    SyncTableFilterSpec {
+        table: "import_account_templates",
+        filter: SyncRowFilter::OverwriteRiskImportAccountTemplates,
+    },
+    SyncTableFilterSpec {
+        table: "activity_taxonomy_assignments",
+        filter: SyncRowFilter::OverwriteRiskActivityTaxonomyAssignments,
     },
     SyncTableFilterSpec {
         table: "app_settings",
@@ -3902,6 +3929,36 @@ mod tests {
         db_path
     }
 
+    fn create_snapshot_db_with_account_asset_snapshot_position(
+        account_id: &str,
+        asset_id: &str,
+    ) -> String {
+        let app_data = tempdir()
+            .expect("tempdir")
+            .keep()
+            .to_string_lossy()
+            .to_string();
+        let db_path = init(&app_data).expect("init db");
+        run_migrations(&db_path).expect("migrate db");
+        let pool = create_pool(&db_path).expect("create pool");
+        let mut conn = get_connection(&pool).expect("conn");
+        insert_account_for_test(&mut conn, account_id).expect("insert account");
+        insert_asset_kind_for_test(&mut conn, asset_id, "INVESTMENT").expect("insert asset");
+        let snapshot_id = format!("snap-{account_id}");
+        let sql = format!(
+            "INSERT INTO holdings_snapshots (id, account_id, snapshot_date, currency, positions, cash_balances, cost_basis, net_contribution, calculated_at, net_contribution_base, cash_total_account_currency, cash_total_base_currency, source)
+             VALUES ('{}', '{}', '2026-01-01', 'USD', '{{}}', '{{}}', '0', '0', '2026-01-01T00:00:00Z', '0', '0', '0', 'MANUAL_ENTRY');
+             INSERT INTO snapshot_positions (snapshot_id, asset_id, quantity, average_cost, total_cost_basis, currency, inception_date, is_alternative, contract_multiplier, created_at, last_updated)
+             VALUES ('{}', '{}', '3', '10', '30', 'USD', '2026-01-01T00:00:00Z', 0, '1', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            escape_sqlite_str(&snapshot_id),
+            escape_sqlite_str(account_id),
+            escape_sqlite_str(&snapshot_id),
+            escape_sqlite_str(asset_id)
+        );
+        conn.batch_execute(&sql).expect("insert snapshot position");
+        db_path
+    }
+
     fn insert_portfolio_for_test(
         conn: &mut SqliteConnection,
         portfolio_id: &str,
@@ -5028,6 +5085,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_restore_orders_snapshot_positions_after_snapshot_parents() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let account_id = "acc-position-restore";
+        let asset_id = "asset-position-restore";
+        let snapshot_path =
+            create_snapshot_db_with_account_asset_snapshot_position(account_id, asset_id);
+
+        repo.restore_snapshot_tables_from_file(
+            snapshot_path,
+            vec![
+                "snapshot_positions".to_string(),
+                "holdings_snapshots".to_string(),
+                "assets".to_string(),
+                "accounts".to_string(),
+            ],
+            92,
+            "device-position-restore".to_string(),
+            Some(1),
+        )
+        .await
+        .expect("restore snapshot");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        let position_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c
+             FROM snapshot_positions
+             WHERE snapshot_id = 'snap-acc-position-restore'
+               AND asset_id = 'asset-position-restore'",
+        )
+        .get_result(&mut conn)
+        .expect("count restored snapshot positions");
+        assert_eq!(position_count.c, 1);
+    }
+
+    #[tokio::test]
     async fn snapshot_restore_skips_orphan_portfolio_accounts_and_clears_existing_rows() {
         #[derive(diesel::QueryableByName)]
         struct CountRow {
@@ -5314,6 +5413,38 @@ mod tests {
             )
             .execute(&mut conn)
             .expect("insert broker account");
+            insert_broker_import_run_for_test(&mut conn, "broker-run-risk", "broker-account-risk")
+                .expect("insert broker import run");
+            insert_activity_for_snapshot_filter_test(
+                &mut conn,
+                "broker-activity-risk",
+                "broker-account-risk",
+                "SNAPTRADE",
+                Some("broker-run-risk"),
+                Some("broker-row-risk"),
+                0,
+            )
+            .expect("insert broker activity");
+            diesel::sql_query(
+                "INSERT INTO activity_taxonomy_assignments \
+                 (id, activity_id, taxonomy_id, category_id, weight, source, created_at, updated_at) \
+                 VALUES ('broker-assignment-risk', 'broker-activity-risk', 'spending_categories', \
+                         'cat_food', 10000, 'rule', \
+                         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            )
+            .execute(&mut conn)
+            .expect("insert broker activity generated category sidecar");
+            conn.batch_execute(
+                "INSERT INTO import_templates \
+                 (id, name, scope, kind, source_system, config_version, config, created_at, updated_at) \
+                 VALUES ('broker-template-risk', 'Broker Template', 'USER', 'BROKER_ACTIVITY', \
+                         'SNAPTRADE', 1, '{}', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);
+                 INSERT INTO import_account_templates \
+                 (id, account_id, context_kind, source_system, template_id, created_at, updated_at) \
+                 VALUES ('broker-profile-risk', 'broker-account-risk', 'BROKER_ACTIVITY', \
+                         'SNAPTRADE', 'broker-template-risk', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            )
+            .expect("insert broker import profile");
         }
 
         let summary = repo
@@ -5322,6 +5453,81 @@ mod tests {
 
         assert_eq!(summary.total_rows, 0);
         assert!(summary.non_empty_tables.is_empty());
+    }
+
+    #[tokio::test]
+    async fn overwrite_risk_summary_counts_manual_broker_activity_sidecars() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            conn.batch_execute(
+                "INSERT INTO platforms (id, name, url, external_id, kind, website_url, logo_url) \
+                 VALUES ('broker-platform-manual-risk', 'Broker Platform', '', 'external-manual-risk', \
+                         'BROKERAGE', NULL, NULL);
+                 INSERT INTO accounts \
+                 (id, name, account_type, `group`, currency, is_default, is_active, created_at, updated_at, \
+                  platform_id, account_number, meta, provider, provider_account_id, is_archived, tracking_mode) \
+                 VALUES ('broker-account-manual-risk', 'Broker Account', 'cash', NULL, 'USD', 0, 1, \
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'broker-platform-manual-risk', NULL, NULL, \
+                         'SNAPTRADE', 'broker-provider-account-manual-risk', 0, 'portfolio')",
+            )
+            .expect("insert broker account");
+            insert_broker_import_run_for_test(
+                &mut conn,
+                "broker-run-manual-risk",
+                "broker-account-manual-risk",
+            )
+            .expect("insert broker import run");
+            insert_activity_for_snapshot_filter_test(
+                &mut conn,
+                "broker-activity-manual-risk",
+                "broker-account-manual-risk",
+                "SNAPTRADE",
+                Some("broker-run-manual-risk"),
+                Some("broker-row-manual-risk"),
+                0,
+            )
+            .expect("insert broker activity");
+            conn.batch_execute(
+                "INSERT INTO activity_taxonomy_assignments \
+                 (id, activity_id, taxonomy_id, category_id, weight, source, created_at, updated_at) \
+                 VALUES ('broker-manual-assignment-risk', 'broker-activity-manual-risk', \
+                         'spending_categories', 'cat_food', 10000, 'manual', \
+                         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+                 INSERT INTO spending_event_types (id, key, name, color, created_at, updated_at) \
+                 VALUES ('broker-event-type-risk', 'broker_event', 'Broker Event', NULL, \
+                         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+                 INSERT INTO spending_events \
+                 (id, name, description, event_type_id, start_date, end_date, created_at, updated_at) \
+                 VALUES ('broker-event-risk', 'Broker Event', NULL, 'broker-event-type-risk', \
+                         '2026-01-01', '2026-01-02', \
+                         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+                 INSERT INTO spending_activity_events (activity_id, event_id, created_at, updated_at) \
+                 VALUES ('broker-activity-manual-risk', 'broker-event-risk', \
+                         '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            )
+            .expect("insert broker manual sidecars");
+        }
+
+        let summary = repo
+            .get_local_sync_overwrite_risk_summary()
+            .expect("overwrite risk summary");
+
+        assert_eq!(summary.total_rows, 3);
+        assert!(summary
+            .non_empty_tables
+            .iter()
+            .any(|row| row.table == "activity_taxonomy_assignments" && row.rows == 1));
+        assert!(summary
+            .non_empty_tables
+            .iter()
+            .any(|row| row.table == "spending_events" && row.rows == 1));
+        assert!(summary
+            .non_empty_tables
+            .iter()
+            .any(|row| row.table == "spending_activity_events" && row.rows == 1));
     }
 
     #[tokio::test]
@@ -7041,6 +7247,353 @@ mod tests {
         repo.validate_snapshot_upload_integrity(vec!["portfolio_accounts".to_string()])
             .await
             .expect("missing portfolio membership should be skipped by snapshot upload validation");
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_keeps_csv_import_parent_and_excludes_broker_rows() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+        #[derive(diesel::QueryableByName)]
+        struct ImportRunIdRow {
+            #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+            import_run_id: Option<String>,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account_for_test(&mut conn, "acc-activity-broker-parent").expect("insert account");
+        conn.batch_execute(
+            "INSERT INTO import_runs
+             (id, account_id, source_system, run_type, mode, status, started_at, finished_at,
+              review_mode, applied_at, checkpoint_in, checkpoint_out, summary, warnings, error, created_at, updated_at)
+             VALUES
+             ('run-csv-parent', 'acc-activity-broker-parent', 'CSV', 'IMPORT',
+              'INCREMENTAL', 'APPLIED', '2026-02-12T00:00:00Z', '2026-02-12T00:01:00Z',
+              'NEVER', '2026-02-12T00:01:00Z', NULL, NULL, NULL, NULL, NULL,
+              '2026-02-12T00:00:00Z', '2026-02-12T00:01:00Z'),
+             ('run-broker-parent', 'acc-activity-broker-parent', 'SNAPTRADE', 'SYNC',
+              'INCREMENTAL', 'APPLIED', '2026-02-12T00:00:00Z', '2026-02-12T00:01:00Z',
+              'NEVER', '2026-02-12T00:01:00Z', NULL, NULL, NULL, NULL, NULL,
+              '2026-02-12T00:00:00Z', '2026-02-12T00:01:00Z');
+             INSERT INTO activities
+             (id, account_id, asset_id, activity_type, activity_type_override, source_type, subtype, status,
+              activity_date, settlement_date, quantity, unit_price, amount, fee, currency, fx_rate, notes, metadata,
+              source_system, source_record_id, source_group_id, idempotency_key, import_run_id, is_user_modified,
+              needs_review, created_at, updated_at)
+             VALUES
+             ('activity-csv-imported', 'acc-activity-broker-parent', NULL, 'DEPOSIT',
+              NULL, NULL, NULL, 'COMPLETED', '2026-02-12', NULL, NULL, NULL, '100.00',
+              NULL, 'USD', NULL, NULL, NULL, 'CSV', 'csv-row-1', NULL, NULL,
+              'run-csv-parent', 0, 0, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z'),
+             ('activity-broker-modified', 'acc-activity-broker-parent', NULL, 'DEPOSIT',
+              NULL, NULL, NULL, 'COMPLETED', '2026-02-12', NULL, NULL, NULL, '100.00',
+              NULL, 'USD', NULL, NULL, NULL, 'SNAPTRADE', 'broker-row-1', NULL, NULL,
+              'run-broker-parent', 1, 0, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z')",
+        )
+        .expect("insert csv and broker activities");
+
+        let payload = repo
+            .export_snapshot_sqlite_image(vec![
+                "accounts".to_string(),
+                "import_runs".to_string(),
+                "activities".to_string(),
+            ])
+            .await
+            .expect("export snapshot");
+
+        let exported_dir = tempdir().expect("tempdir");
+        let exported_path = exported_dir.path().join("snapshot.db");
+        std::fs::write(&exported_path, payload).expect("write snapshot db");
+
+        let mut exported_conn =
+            SqliteConnection::establish(exported_path.to_string_lossy().as_ref())
+                .expect("open snapshot db");
+        let exported_run_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM import_runs")
+                .get_result(&mut exported_conn)
+                .expect("count exported import runs");
+        assert_eq!(exported_run_count.c, 1);
+        let exported_activity_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM activities")
+                .get_result(&mut exported_conn)
+                .expect("count exported activities");
+        assert_eq!(exported_activity_count.c, 1);
+        let exported_activity: ImportRunIdRow = diesel::sql_query(
+            "SELECT import_run_id FROM activities WHERE id = 'activity-csv-imported'",
+        )
+        .get_result(&mut exported_conn)
+        .expect("load exported activity");
+        assert_eq!(
+            exported_activity.import_run_id.as_deref(),
+            Some("run-csv-parent")
+        );
+        let exported_broker_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM import_runs WHERE id = 'run-broker-parent'
+             UNION ALL
+             SELECT COUNT(*) AS c FROM activities WHERE id = 'activity-broker-modified'",
+        )
+        .get_results::<CountRow>(&mut exported_conn)
+        .expect("count exported broker rows")
+        .into_iter()
+        .fold(CountRow { c: 0 }, |mut acc, row| {
+            acc.c += row.c;
+            acc
+        });
+        assert_eq!(exported_broker_count.c, 0);
+        drop(exported_conn);
+
+        let (restore_pool, restore_writer) = setup_db();
+        let restore_repo = AppSyncRepository::new(restore_pool.clone(), restore_writer);
+        restore_repo
+            .restore_snapshot_tables_from_file(
+                exported_path.to_string_lossy().to_string(),
+                vec![
+                    "activities".to_string(),
+                    "import_runs".to_string(),
+                    "accounts".to_string(),
+                ],
+                203,
+                "device-activity-broker-parent".to_string(),
+                Some(1),
+            )
+            .await
+            .expect("restore snapshot");
+
+        let mut restore_conn = get_connection(&restore_pool).expect("conn");
+        let restored_activity: ImportRunIdRow = diesel::sql_query(
+            "SELECT import_run_id FROM activities WHERE id = 'activity-csv-imported'",
+        )
+        .get_result(&mut restore_conn)
+        .expect("load restored activity");
+        assert_eq!(
+            restored_activity.import_run_id.as_deref(),
+            Some("run-csv-parent")
+        );
+        let restored_run_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM import_runs WHERE id = 'run-csv-parent'")
+                .get_result(&mut restore_conn)
+                .expect("count restored import run");
+        assert_eq!(restored_run_count.c, 1);
+        let restored_broker_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM import_runs WHERE id = 'run-broker-parent'
+             UNION ALL
+             SELECT COUNT(*) AS c FROM activities WHERE id = 'activity-broker-modified'",
+        )
+        .get_results::<CountRow>(&mut restore_conn)
+        .expect("count restored broker rows")
+        .into_iter()
+        .fold(CountRow { c: 0 }, |mut acc, row| {
+            acc.c += row.c;
+            acc
+        });
+        assert_eq!(restored_broker_count.c, 0);
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_restores_allocation_weights_for_custom_taxonomy() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        conn.batch_execute(
+            "INSERT INTO taxonomies
+             (id, name, color, description, is_system, is_single_select, sort_order, created_at, updated_at, scope)
+             VALUES ('taxonomy-allocation-custom', 'Allocation Custom', '#000000', NULL, 0, 0, 0,
+                     '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z', 'asset');
+             INSERT INTO taxonomy_categories
+             (id, taxonomy_id, parent_id, name, key, color, description, sort_order, created_at, updated_at, icon)
+             VALUES ('category-allocation-custom', 'taxonomy-allocation-custom', NULL, 'Growth', 'growth',
+                     '#000000', NULL, 0, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z', NULL);
+             INSERT INTO allocation_targets
+             (id, name, scope_type, scope_id, taxonomy_id, trigger_type, drift_band_bps, rebalance_goal,
+              min_trade_amount, whole_shares_only, allow_sells, created_at, updated_at, archived_at)
+             VALUES ('target-allocation-custom', 'Custom Allocation', 'all', NULL, 'taxonomy-allocation-custom',
+                     'threshold', 500, 'nearest_band', '0', 0, 0,
+                     '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z', NULL);
+             INSERT INTO allocation_target_weights
+             (id, target_id, taxonomy_id, category_id, target_bps, is_locked, is_required, created_at, updated_at)
+             VALUES ('weight-allocation-custom', 'target-allocation-custom', 'taxonomy-allocation-custom',
+                     'category-allocation-custom', 10000, 0, 1,
+                     '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z')",
+        )
+        .expect("insert allocation target with custom taxonomy");
+
+        let payload = repo
+            .export_snapshot_sqlite_image(vec![
+                "taxonomies".to_string(),
+                "taxonomy_categories".to_string(),
+                "allocation_targets".to_string(),
+                "allocation_target_weights".to_string(),
+            ])
+            .await
+            .expect("export snapshot");
+
+        let exported_dir = tempdir().expect("tempdir");
+        let exported_path = exported_dir.path().join("snapshot.db");
+        std::fs::write(&exported_path, payload).expect("write snapshot db");
+
+        let mut exported_conn =
+            SqliteConnection::establish(exported_path.to_string_lossy().as_ref())
+                .expect("open snapshot db");
+        let exported_category_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c
+             FROM taxonomy_categories
+             WHERE taxonomy_id = 'taxonomy-allocation-custom'
+               AND id = 'category-allocation-custom'",
+        )
+        .get_result(&mut exported_conn)
+        .expect("count exported custom taxonomy category");
+        assert_eq!(exported_category_count.c, 1);
+        drop(exported_conn);
+
+        let (restore_pool, restore_writer) = setup_db();
+        let restore_repo = AppSyncRepository::new(restore_pool.clone(), restore_writer);
+        restore_repo
+            .restore_snapshot_tables_from_file(
+                exported_path.to_string_lossy().to_string(),
+                vec![
+                    "allocation_target_weights".to_string(),
+                    "allocation_targets".to_string(),
+                    "taxonomy_categories".to_string(),
+                    "taxonomies".to_string(),
+                ],
+                202,
+                "device-allocation-custom".to_string(),
+                Some(1),
+            )
+            .await
+            .expect("restore allocation snapshot");
+
+        let mut restore_conn = get_connection(&restore_pool).expect("conn");
+        let weight_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c
+             FROM allocation_target_weights
+             WHERE id = 'weight-allocation-custom'",
+        )
+        .get_result(&mut restore_conn)
+        .expect("count restored allocation weight");
+        assert_eq!(weight_count.c, 1);
+    }
+
+    #[tokio::test]
+    async fn snapshot_restore_skips_budget_rows_with_missing_category_dependencies() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        conn.batch_execute(
+            "INSERT INTO taxonomy_categories
+             (id, taxonomy_id, parent_id, name, key, color, description, sort_order, created_at, updated_at, icon)
+             VALUES
+             ('cat_future_budget', 'spending_categories', NULL, 'Future Budget Seed', 'future_budget_seed',
+              '#000000', NULL, 501, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z', NULL),
+             ('budget-category-custom', 'spending_categories', NULL, 'Custom Budget Category', 'custom_budget_category',
+              '#000000', NULL, 502, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z', NULL);
+             INSERT INTO budget_groups
+             (id, name, key, color, icon, sort_order, is_system, created_at, updated_at)
+             VALUES
+             ('budget-group-custom', 'Custom Budget Group', 'custom-budget-group',
+              '#000000', NULL, 502, 0, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z');
+             INSERT INTO budget_group_assignments
+             (id, group_id, taxonomy_id, category_id, is_system, created_at, updated_at)
+             VALUES
+             ('budget-assignment-future', 'budget-group-custom', 'spending_categories', 'cat_future_budget',
+              1, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z'),
+             ('budget-assignment-custom', 'budget-group-custom', 'spending_categories', 'budget-category-custom',
+              0, '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z');
+             INSERT INTO budget_targets
+             (id, period_key, target_type, taxonomy_id, category_id, group_id, amount, created_at, updated_at)
+             VALUES
+             ('budget-target-future', 'default', 'category', 'spending_categories', 'cat_future_budget',
+              NULL, '100', '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z'),
+             ('budget-target-custom', 'default', 'category', 'spending_categories', 'budget-category-custom',
+              NULL, '100', '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z');
+             INSERT INTO budget_rollover_settings
+             (id, target_type, taxonomy_id, category_id, group_id, enabled, start_month, starting_balance, created_at, updated_at)
+             VALUES
+             ('budget-rollover-future', 'category', 'spending_categories', 'cat_future_budget',
+              NULL, 1, '2026-01', '0', '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z'),
+             ('budget-rollover-custom', 'category', 'spending_categories', 'budget-category-custom',
+              NULL, 1, '2026-01', '0', '2026-02-12T00:00:00Z', '2026-02-12T00:00:00Z')",
+        )
+        .expect("insert budget dependency rows");
+
+        let payload = repo
+            .export_snapshot_sqlite_image(vec![
+                "budget_groups".to_string(),
+                "taxonomy_categories".to_string(),
+                "budget_group_assignments".to_string(),
+                "budget_targets".to_string(),
+                "budget_rollover_settings".to_string(),
+            ])
+            .await
+            .expect("export budget snapshot");
+
+        let exported_dir = tempdir().expect("tempdir");
+        let exported_path = exported_dir.path().join("budget-snapshot.db");
+        std::fs::write(&exported_path, payload).expect("write snapshot db");
+
+        let (restore_pool, restore_writer) = setup_db();
+        let restore_repo = AppSyncRepository::new(restore_pool.clone(), restore_writer);
+        restore_repo
+            .restore_snapshot_tables_from_file(
+                exported_path.to_string_lossy().to_string(),
+                vec![
+                    "budget_group_assignments".to_string(),
+                    "budget_targets".to_string(),
+                    "budget_rollover_settings".to_string(),
+                    "taxonomy_categories".to_string(),
+                    "budget_groups".to_string(),
+                ],
+                204,
+                "device-budget-dependencies".to_string(),
+                Some(1),
+            )
+            .await
+            .expect("restore budget snapshot");
+
+        let mut restore_conn = get_connection(&restore_pool).expect("conn");
+        let custom_assignment_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c
+             FROM budget_group_assignments
+             WHERE id = 'budget-assignment-custom'",
+        )
+        .get_result(&mut restore_conn)
+        .expect("count custom budget assignment");
+        assert_eq!(custom_assignment_count.c, 1);
+
+        let missing_dependency_rows: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM budget_group_assignments WHERE id = 'budget-assignment-future'
+             UNION ALL
+             SELECT COUNT(*) AS c FROM budget_targets WHERE id = 'budget-target-future'
+             UNION ALL
+             SELECT COUNT(*) AS c FROM budget_rollover_settings WHERE id = 'budget-rollover-future'",
+        )
+        .get_results::<CountRow>(&mut restore_conn)
+        .expect("count skipped budget rows")
+        .into_iter()
+        .fold(CountRow { c: 0 }, |mut acc, row| {
+            acc.c += row.c;
+            acc
+        });
+        assert_eq!(missing_dependency_rows.c, 0);
     }
 
     #[tokio::test]

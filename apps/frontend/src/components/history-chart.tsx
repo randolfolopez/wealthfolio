@@ -13,10 +13,7 @@ import {
   type RechartsActiveDotProps,
   type RechartsMarkerShapeProps,
 } from "./history-chart-marker";
-import {
-  getAutomaticHistoryChartScale,
-  type HistoryChartScaleMode,
-} from "./history-chart-scale";
+import { getAutomaticHistoryChartScale, type HistoryChartScaleMode } from "./history-chart-scale";
 
 const CHART_SCRUB_HAPTIC_INTERVAL_MS = 80;
 
