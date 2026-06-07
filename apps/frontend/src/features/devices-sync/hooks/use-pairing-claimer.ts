@@ -115,7 +115,7 @@ export function usePairingClaimer() {
   }, [error, keyPoll.error, flowPoll.error]);
 
   const bootstrapFlowState = useMemo<PairingBootstrapState>(() => {
-    if (phase === "error" && flowId !== null) {
+    if (flowId !== null && (phase === "error" || flowPoll.error)) {
       return "failed";
     }
     if (
@@ -126,7 +126,7 @@ export function usePairingClaimer() {
       return "active";
     }
     return "idle";
-  }, [flowId, phase]);
+  }, [flowId, phase, flowPoll.error]);
 
   const processFlowPhase = useCallback(
     (flowPhase: PairingFlowPhase) => {
