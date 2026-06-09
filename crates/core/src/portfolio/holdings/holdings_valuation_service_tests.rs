@@ -529,6 +529,10 @@ mod tests {
             realized_gain_pct: None,   // To be calculated
             total_gain: None,          // To be calculated
             total_gain_pct: None,      // To be calculated
+            income: None,
+            total_return: None,
+            total_return_pct: None,
+            return_basis: None,
             source_account_ids: vec![],
             metadata: None,
         }

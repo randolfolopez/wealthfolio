@@ -383,7 +383,8 @@ You can configure the container using either:
 1. **Environment variables** (inline with `-e` flag)
 2. **Environment file** (using `--env-file` flag)
 
-**Option 1: Create a Docker Compose environment file** (recommended for production):
+**Option 1: Create a Docker Compose environment file** (recommended for
+production):
 
 ```bash
 SECRET=$(openssl rand -base64 32)
@@ -400,8 +401,8 @@ WF_STATIC_DIR=dist
 EOF
 ```
 
-Set `WF_CORS_ALLOW_ORIGINS` to the exact URL you will use in your browser,
-such as `http://192.168.1.10:8088` or `https://wealthfolio.example.com`.
+Set `WF_CORS_ALLOW_ORIGINS` to the exact URL you will use in your browser, such
+as `http://192.168.1.10:8088` or `https://wealthfolio.example.com`.
 
 **Option 2: Use inline environment variables** (simpler for testing):
 

@@ -340,6 +340,7 @@ pub struct AssetLotView {
     pub close_date: Option<String>,
     pub disposal_proceeds: Option<Decimal>,
     pub disposal_cost_basis: Option<Decimal>,
+    pub disposal_cost_basis_base: Option<Decimal>,
     pub realized_pnl: Option<Decimal>,
     pub realized_pnl_base: Option<Decimal>,
 }
