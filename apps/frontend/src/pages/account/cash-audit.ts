@@ -58,7 +58,10 @@ export function toDateKey(
   return null;
 }
 
-export function offsetDateKey(dateKey: string | null | undefined, days: number): string | undefined {
+export function offsetDateKey(
+  dateKey: string | null | undefined,
+  days: number,
+): string | undefined {
   if (!dateKey || !DATE_KEY_PATTERN.test(dateKey)) return undefined;
   const [year, month, day] = dateKey.split("-").map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -79,10 +82,7 @@ export function getCurrentNegativeCashRun(
   if (!latestValuation || latestValuation.cashBalance >= 0) return null;
 
   let firstNegativeIndex = sortedHistory.length - 1;
-  while (
-    firstNegativeIndex > 0 &&
-    (sortedHistory[firstNegativeIndex - 1]?.cashBalance ?? 0) < 0
-  ) {
+  while (firstNegativeIndex > 0 && (sortedHistory[firstNegativeIndex - 1]?.cashBalance ?? 0) < 0) {
     firstNegativeIndex -= 1;
   }
 
@@ -101,7 +101,8 @@ export function buildCashAuditReviewTarget(
 
   const { firstNegativeValuation, previousNonNegativeValuation } = negativeRun;
   const valuationDate =
-    toDateKey(firstNegativeValuation.valuationDate, timezone) ?? firstNegativeValuation.valuationDate;
+    toDateKey(firstNegativeValuation.valuationDate, timezone) ??
+    firstNegativeValuation.valuationDate;
   const previousValuationDate = toDateKey(previousNonNegativeValuation?.valuationDate, timezone);
   const ledgerRows = buildCashAuditLedgerRows(
     activities.filter((activity) => {

@@ -56,6 +56,8 @@ interface InvestmentFilterOverrides {
 }
 
 const ALL_ACCOUNT_SCOPE: AccountScope = { type: "all" };
+const EMPTY_ACTIVITY_TYPES: ActivityType[] = [];
+const EMPTY_INSTRUMENT_TYPES: string[] = [];
 
 function parseLocalDate(value?: string): Date | undefined {
   if (!value) return undefined;
@@ -147,23 +149,25 @@ const ActivityPage = () => {
     searchParams.has("to") ||
     searchParams.has("q");
   const accountScope =
-    activityUrlFilters.accountScope ?? (hasActivityUrlFilters ? ALL_ACCOUNT_SCOPE : persistedAccountScope);
+    activityUrlFilters.accountScope ??
+    (hasActivityUrlFilters ? ALL_ACCOUNT_SCOPE : persistedAccountScope);
   const statusFilter =
     activityUrlFilters.statusFilter ?? (hasActivityUrlFilters ? "all" : persistedStatusFilter);
   // Health Center deeplinks can scope the list to specific activity types / a date
   // window (e.g. transfers around an incomplete-transfer issue). URL wins over persisted.
   const urlActivityTypes = activityUrlFilters.activityTypes;
   const effectiveActivityTypes =
-    urlActivityTypes ?? (hasActivityUrlFilters ? [] : selectedActivityTypes);
+    urlActivityTypes ?? (hasActivityUrlFilters ? EMPTY_ACTIVITY_TYPES : selectedActivityTypes);
   const urlDateFrom = activityUrlFilters.dateFrom;
   const urlDateTo = activityUrlFilters.dateTo;
-  const effectiveDateFrom = urlDateFrom ?? (hasActivityUrlFilters ? undefined : selectedDateRange.from);
+  const effectiveDateFrom =
+    urlDateFrom ?? (hasActivityUrlFilters ? undefined : selectedDateRange.from);
   const effectiveDateTo = urlDateTo ?? (hasActivityUrlFilters ? undefined : selectedDateRange.to);
   const urlSearchQuery = activityUrlFilters.searchQuery;
   const effectiveSearchQuery = urlSearchQuery ?? (hasActivityUrlFilters ? "" : searchQuery);
   const displayedSearchInput = urlSearchQuery ?? (hasActivityUrlFilters ? "" : searchInput);
   const effectiveInstrumentTypes = useMemo(
-    () => (hasActivityUrlFilters ? [] : selectedInstrumentTypes),
+    () => (hasActivityUrlFilters ? EMPTY_INSTRUMENT_TYPES : selectedInstrumentTypes),
     [hasActivityUrlFilters, selectedInstrumentTypes],
   );
   const effectiveDateRange = useMemo(

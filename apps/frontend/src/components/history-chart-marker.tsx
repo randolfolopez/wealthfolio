@@ -1,5 +1,10 @@
 export type HistoryChartMarkerVariant = "snapshot" | "buy" | "sell" | "split" | "activity";
-export type HistoryChartMarkerTone = "success" | "destructive" | "secondary" | "warning" | "default";
+export type HistoryChartMarkerTone =
+  | "success"
+  | "destructive"
+  | "secondary"
+  | "warning"
+  | "default";
 export type TradeMarkerVariant = Extract<HistoryChartMarkerVariant, "buy" | "sell">;
 
 export interface RechartsMarkerShapeProps {
@@ -57,10 +62,7 @@ export function HistoryChartMarkerShape({
   const { fill, foreground } = markerColors(markerTone);
 
   return (
-    <g
-      style={{ pointerEvents: "none" }}
-      transform={`translate(${cx ?? 0}, ${cy ?? 0})`}
-    >
+    <g style={{ pointerEvents: "none" }} transform={`translate(${cx ?? 0}, ${cy ?? 0})`}>
       <circle r={12} fill={fill} opacity={0.14} />
       <circle r={8} fill={fill} stroke="var(--background)" strokeWidth={1.5} />
       <text

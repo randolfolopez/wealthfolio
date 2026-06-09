@@ -336,7 +336,9 @@ async function fetchAssetMarkerActivities({
       "",
       { id: "date", desc: false },
     );
-    activities.push(...response.data.filter((activity) => isAssetMarkerActivity(activity, assetId)));
+    activities.push(
+      ...response.data.filter((activity) => isAssetMarkerActivity(activity, assetId)),
+    );
     totalRowCount = response.meta.totalRowCount;
     page += 1;
   } while (page * pageSize < totalRowCount);

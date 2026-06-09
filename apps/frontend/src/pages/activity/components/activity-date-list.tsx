@@ -52,7 +52,8 @@ export function ActivityDateList({
     [activities, endingCashBalance],
   );
   const hasCashContext =
-    cashLedger.startingCashBalance !== undefined && cashAuditTarget?.hasExplainingActivity !== false;
+    cashLedger.startingCashBalance !== undefined &&
+    cashAuditTarget?.hasExplainingActivity !== false;
 
   const filteredLedgerRows = useMemo(() => {
     if (!hasCashContext) return cashLedger.rows;

@@ -417,7 +417,11 @@ impl DataConsistencyCheck {
                     "A sale could not be matched to a lot, so realized gain/loss and performance attribution may be incomplete.",
                 )
                 .affected_count(count as u32)
-                .navigate_action(NavigateAction::to_activities(Some("sell")))
+                .navigate_action(NavigateAction {
+                    route: "/activities".to_string(),
+                    query: Some(serde_json::json!({ "types": "SELL" })),
+                    label: "View Activities".to_string(),
+                })
                 .data_hash(data_hash);
             if !affected_items.is_empty() {
                 builder = builder.affected_items(affected_items);
@@ -682,6 +686,15 @@ mod tests {
             .details
             .as_deref()
             .is_some_and(|details| details.contains("AAPL on 2026-06-01")));
+        let navigate_action = issues[0].navigate_action.as_ref().unwrap();
+        assert_eq!(navigate_action.route, "/activities");
+        assert_eq!(
+            navigate_action
+                .query
+                .as_ref()
+                .and_then(|query| query.get("types")),
+            Some(&serde_json::json!("SELL"))
+        );
     }
 
     #[test]

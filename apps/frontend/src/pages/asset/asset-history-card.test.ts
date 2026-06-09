@@ -72,7 +72,7 @@ describe("asset history marker helpers", () => {
   });
 
   it("uses badge tones for other relevant asset activity types", () => {
-    expect(activityMarkerLabel(ActivityType.ADJUSTMENT)).toBe("A");
+    expect(activityMarkerLabel(ActivityType.ADJUSTMENT)).toBe("AD");
     expect(activityMarkerTone(ActivityType.ADJUSTMENT)).toBe("secondary");
     expect(activityMarkerLabel(ActivityType.TRANSFER_OUT)).toBe("T");
     expect(activityMarkerTone(ActivityType.TRANSFER_OUT)).toBe("destructive");

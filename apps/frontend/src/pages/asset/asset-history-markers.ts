@@ -54,6 +54,7 @@ export function activityMarkerVariant(activityType: ActivityType): AssetActivity
 
 export function activityMarkerLabel(activityType: ActivityType) {
   if (activityType === ActivityType.SPLIT) return "SP";
+  if (activityType === ActivityType.ADJUSTMENT) return "AD";
   return (ActivityTypeNames[activityType] ?? activityType).charAt(0).toUpperCase();
 }
 

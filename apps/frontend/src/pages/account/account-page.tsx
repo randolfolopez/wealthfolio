@@ -78,13 +78,13 @@ import { format, subMonths } from "date-fns";
 import { useNavigate, useParams } from "react-router-dom";
 import { AccountContributionLimit } from "./account-contribution-limit";
 import AccountHoldings from "./account-holdings";
+import AccountMetrics from "./account-metrics";
 import {
   buildCashAuditReviewTarget,
   getCurrentNegativeCashRun,
   offsetDateKey,
   toDateKey,
 } from "./cash-audit";
-import AccountMetrics from "./account-metrics";
 import AccountSnapshotHistory from "./account-snapshot-history";
 
 interface HistoryChartData {
@@ -320,13 +320,21 @@ const AccountPage = () => {
     { type: "account", accountId: id },
   );
 
+  const currentValuation = valuationHistory?.[valuationHistory.length - 1];
+  const currentCashBalanceIsNegative = (currentValuation?.cashBalance ?? 0) < 0;
+  const shouldLoadCashAuditValuationHistory =
+    currentCashBalanceIsNegative && !isHoldingsMode && !isLiabilityAccount;
+
   const {
     valuationHistory: cashAuditValuationHistory,
     isLoading: isCashAuditValuationHistoryLoading,
-  } = useValuationHistory(undefined, { type: "account", accountId: id });
-
-  const currentValuation = valuationHistory?.[valuationHistory.length - 1];
-  const currentCashBalanceIsNegative = (currentValuation?.cashBalance ?? 0) < 0;
+  } = useValuationHistory(
+    undefined,
+    { type: "account", accountId: id },
+    {
+      enabled: shouldLoadCashAuditValuationHistory,
+    },
+  );
 
   const selectedActivityDateValuation = useMemo(() => {
     if (!selectedActivityDate) return null;
@@ -376,10 +384,7 @@ const AccountPage = () => {
       return getCashAuditActivities(id, cashAuditDateFrom, cashAuditDateTo);
     },
     enabled:
-      !!account &&
-      currentCashBalanceIsNegative &&
-      !!currentNegativeCashRun &&
-      !!cashAuditDateTo,
+      !!account && currentCashBalanceIsNegative && !!currentNegativeCashRun && !!cashAuditDateTo,
   });
 
   const negativeCashAuditTarget = useMemo(
