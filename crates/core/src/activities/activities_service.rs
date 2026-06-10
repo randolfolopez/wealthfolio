@@ -15,7 +15,9 @@ use crate::activities::activities_errors::ActivityError;
 use crate::activities::activities_model::*;
 use crate::activities::csv_parser::{self, ParseConfig, ParsedCsvResult};
 use crate::activities::idempotency::compute_idempotency_key;
-use crate::activities::{ActivityRepositoryTrait, ActivityServiceTrait, TransferPair};
+use crate::activities::{
+    ActivityRepositoryTrait, ActivityServiceTrait, TransferPair, TransferPairResolution,
+};
 use crate::activities::{
     ImportRun, ImportRunMode, ImportRunRepositoryTrait, ImportRunSummary, ImportRunType, ReviewMode,
 };
@@ -3890,22 +3892,24 @@ impl ActivityServiceTrait for ActivityService {
                 "Transfer match candidates require a transfer activity",
             ));
         };
-        if source.source_group_id.is_some() {
+        let all_activities = self.activity_repository.get_activities()?;
+        let transfer_resolution = TransferPairResolution::from_activities(&all_activities);
+        if transfer_resolution.pair_for_activity(&source.id).is_some() {
             return Ok(Vec::new());
         }
 
         let window_days = request.window_days.unwrap_or(7).clamp(0, 90);
         let limit = request.limit.unwrap_or(25).clamp(1, 100);
 
-        let mut candidates: Vec<TransferMatchCandidate> = self
-            .activity_repository
-            .get_activities()?
+        let mut candidates: Vec<TransferMatchCandidate> = all_activities
             .into_iter()
             .filter(|candidate| {
                 candidate.id != source.id
                     && candidate.account_id != source.account_id
                     && candidate.is_posted()
-                    && candidate.source_group_id.is_none()
+                    && transfer_resolution
+                        .pair_for_activity(&candidate.id)
+                        .is_none()
                     && candidate.effective_type() == opposite_type
             })
             .filter_map(|candidate| {

@@ -1,7 +1,11 @@
 import type { TaxonomyCategory } from "@/lib/types";
 
 import { getActivitySpendingAmount, isCashActivityIncome } from "./constants";
-import type { ActivityTaxonomyAssignment, CashActivity } from "../types/cash-activity";
+import type {
+  ActivityTaxonomyAssignment,
+  CashActivity,
+  TransferLinkStatus,
+} from "../types/cash-activity";
 
 /** Stable sorted Set→array used in React Query keys (insertion order is unstable). */
 export function stableArr(s: Set<string>): string[] | undefined {
@@ -50,6 +54,13 @@ export interface TransactionDisplay {
   sign: string;
   /** Absolute-safe parsed amount (0 when unparseable). */
   safeAmount: number;
+}
+
+export function getTransferLinkStatus(activity: CashActivity): TransferLinkStatus | null {
+  if (activity.activityType !== "TRANSFER_IN" && activity.activityType !== "TRANSFER_OUT") {
+    return null;
+  }
+  return activity.transferLinkStatus ?? (activity.sourceGroupId ? "linked" : "unlinked");
 }
 
 export function getTransactionDisplay(

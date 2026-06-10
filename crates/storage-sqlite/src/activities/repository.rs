@@ -18,7 +18,8 @@ use wealthfolio_core::activities::{
     import_type, is_cash_symbol, Activity, ActivityBulkIdentifierMapping,
     ActivityBulkMutationResult, ActivityDetails, ActivityRepositoryTrait, ActivitySearchResponse,
     ActivitySearchResponseMeta, ActivityUpdate, ActivityUpsert, BulkUpsertResult, ImportMapping,
-    ImportTemplate, IncomeData, NewActivity, Sort, INCOME_ACTIVITY_TYPES, TRADING_ACTIVITY_TYPES,
+    ImportTemplate, IncomeData, NewActivity, Sort, ACTIVITY_TYPE_TRANSFER_IN,
+    ACTIVITY_TYPE_TRANSFER_OUT, INCOME_ACTIVITY_TYPES, TRADING_ACTIVITY_TYPES,
 };
 use wealthfolio_core::limits::ContributionActivity;
 use wealthfolio_core::{Error, Result};
@@ -221,6 +222,35 @@ fn effective_activity_type(activity: &ActivityDB) -> &str {
         .activity_type_override
         .as_deref()
         .unwrap_or(activity.activity_type.as_str())
+}
+
+fn source_group_blocks_transfer_link(
+    conn: &mut SqliteConnection,
+    source_group_id: Option<&str>,
+) -> Result<bool> {
+    let Some(group_id) = source_group_id
+        .map(str::trim)
+        .filter(|group_id| !group_id.is_empty())
+    else {
+        return Ok(false);
+    };
+
+    let group_activities = activities::table
+        .filter(activities::source_group_id.eq(group_id))
+        .select(ActivityDB::as_select())
+        .load::<ActivityDB>(conn)
+        .map_err(StorageError::from)?;
+    if group_activities.len() != 2 {
+        return Ok(false);
+    }
+
+    let has_transfer_in = group_activities
+        .iter()
+        .any(|activity| effective_activity_type(activity) == ACTIVITY_TYPE_TRANSFER_IN);
+    let has_transfer_out = group_activities
+        .iter()
+        .any(|activity| effective_activity_type(activity) == ACTIVITY_TYPE_TRANSFER_OUT);
+    Ok(has_transfer_in && has_transfer_out)
 }
 
 fn parse_optional_decimal(value: Option<&String>) -> Option<Decimal> {
@@ -792,7 +822,13 @@ impl ActivityRepositoryTrait for ActivityRepository {
                         }
                     };
 
-                if transfer_in.source_group_id.is_some() || transfer_out.source_group_id.is_some() {
+                if source_group_blocks_transfer_link(
+                    tx.conn(),
+                    transfer_in.source_group_id.as_deref(),
+                )? || source_group_blocks_transfer_link(
+                    tx.conn(),
+                    transfer_out.source_group_id.as_deref(),
+                )? {
                     return Err(Error::from(ActivityError::InvalidData(
                         "One or both activities are already linked to another transfer".to_string(),
                     )));
@@ -3505,6 +3541,51 @@ mod tests {
         assert_eq!(activity_user_modified(&mut conn, "transfer-in"), 1);
         assert_eq!(activity_user_modified(&mut conn, "transfer-out"), 1);
         assert_eq!(sync_outbox_count(&mut conn), 2);
+    }
+
+    #[tokio::test]
+    async fn link_transfer_activities_repairs_orphan_source_group() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-a");
+        insert_account(&mut conn, "acc-b");
+        insert_transfer_activity(
+            &mut conn,
+            "orphan-in",
+            "acc-a",
+            "TRANSFER_IN",
+            Some("orphan-group"),
+            Some(r#"{"flow":{"is_external":false}}"#),
+        );
+        insert_transfer_activity(
+            &mut conn,
+            "transfer-out",
+            "acc-b",
+            "TRANSFER_OUT",
+            None,
+            None,
+        );
+
+        let (transfer_in, transfer_out) = repo
+            .link_transfer_activities("orphan-in".to_string(), "transfer-out".to_string())
+            .await
+            .expect("orphaned transfer should be repairable");
+
+        assert_eq!(transfer_in.id, "orphan-in");
+        assert_eq!(transfer_out.id, "transfer-out");
+        assert_ne!(transfer_in.source_group_id.as_deref(), Some("orphan-group"));
+        assert!(transfer_in.source_group_id.is_some());
+        assert_eq!(transfer_in.source_group_id, transfer_out.source_group_id);
+        assert_eq!(
+            transfer_in.metadata.as_ref().and_then(|m| {
+                m.get("flow")
+                    .and_then(|flow| flow.get("is_external"))
+                    .and_then(|value| value.as_bool())
+            }),
+            Some(false)
+        );
     }
 
     #[tokio::test]

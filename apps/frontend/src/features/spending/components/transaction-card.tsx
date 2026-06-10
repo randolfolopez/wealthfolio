@@ -18,7 +18,11 @@ import { cn, formatDate } from "@/lib/utils";
 import { QuickCategorizePopover } from "./quick-categorize-popover";
 import { QuickEventPopover } from "./quick-event-popover";
 import { getCashActivityLabel } from "../lib/constants";
-import { getTransactionDisplay, type TransactionRowVM } from "../lib/transactions-helpers";
+import {
+  getTransactionDisplay,
+  getTransferLinkStatus,
+  type TransactionRowVM,
+} from "../lib/transactions-helpers";
 
 interface TransactionCardProps {
   row: TransactionRowVM;
@@ -64,6 +68,7 @@ function TransactionCardImpl({
   const accountName = account?.name ?? a.accountId;
   const isTransfer =
     a.activityType === ActivityType.TRANSFER_IN || a.activityType === ActivityType.TRANSFER_OUT;
+  const transferLinkStatus = getTransferLinkStatus(a);
 
   return (
     <div
@@ -208,7 +213,7 @@ function TransactionCardImpl({
               Duplicate
             </DropdownMenuItem>
             {isTransfer && (onLinkTransfer || onUnlinkTransfer) ? (
-              a.sourceGroupId ? (
+              transferLinkStatus === "linked" ? (
                 onUnlinkTransfer ? (
                   <DropdownMenuItem onClick={() => onUnlinkTransfer(row)}>
                     <Icons.Unlink className="mr-2 h-4 w-4" aria-hidden="true" />

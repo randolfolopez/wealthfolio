@@ -7521,6 +7521,16 @@ mod tests {
         );
         linked.source_group_id = Some("group-1".to_string());
         activity_repository.add_activity(linked);
+        let mut linked_counterpart = create_cash_transfer_activity(
+            "already-linked-out",
+            "acc-d",
+            "TRANSFER_OUT",
+            "2024-01-17T00:00:00Z",
+            dec!(100),
+            "USD",
+        );
+        linked_counterpart.source_group_id = Some("group-1".to_string());
+        activity_repository.add_activity(linked_counterpart);
 
         let activity_service = ActivityService::new(
             activity_repository,
@@ -7545,6 +7555,52 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("Dates differ")));
+    }
+
+    #[test]
+    fn find_transfer_match_candidates_allows_orphan_source_group() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let mut source = create_cash_transfer_activity(
+            "source-out",
+            "acc-a",
+            "TRANSFER_OUT",
+            "2024-01-15T00:00:00Z",
+            dec!(100),
+            "USD",
+        );
+        source.source_group_id = Some("orphan-group".to_string());
+        activity_repository.add_activity(source);
+        activity_repository.add_activity(create_cash_transfer_activity(
+            "cash-match",
+            "acc-b",
+            "TRANSFER_IN",
+            "2024-01-15T00:00:00Z",
+            dec!(100),
+            "USD",
+        ));
+
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service,
+            fx_service,
+            Arc::new(MockQuoteService),
+        );
+
+        let candidates = activity_service
+            .find_transfer_match_candidates(TransferMatchCandidateRequest {
+                activity_id: "source-out".to_string(),
+                window_days: Some(7),
+                limit: Some(25),
+            })
+            .expect("candidate search should succeed");
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].activity.id, "cash-match");
     }
 
     #[test]
