@@ -37,6 +37,7 @@ import {
 
 import { CashActivityForm } from "./cash-activity-form";
 import { ActivityForm } from "@/pages/activity/components/activity-form";
+import { MobileActivityForm } from "@/pages/activity/components/mobile-forms/mobile-activity-form";
 import { TransferMatchDialog } from "@/pages/activity/components/transfer-match-dialog";
 import { getActivityRestrictionLevel } from "@/lib/activity-restrictions";
 import { ActivityType } from "@/lib/constants";
@@ -960,16 +961,26 @@ export const SpendingTransactionsTab = forwardRef<SpendingTransactionsTabHandle>
           onTransferClick={handleTransferClick}
         />
 
-        {showTransferForm && (
-          <ActivityForm
-            accounts={transferFormAccounts}
-            transferAccounts={transferFormAccounts}
-            activity={transferFormActivity}
-            open={showTransferForm}
-            onClose={handleTransferFormClose}
-            hidePicker
-          />
-        )}
+        {showTransferForm &&
+          (isMobile ? (
+            <MobileActivityForm
+              accounts={transferFormAccounts}
+              transferAccounts={transferFormAccounts}
+              activity={transferFormActivity}
+              open={showTransferForm}
+              onClose={handleTransferFormClose}
+              startOnDetails
+            />
+          ) : (
+            <ActivityForm
+              accounts={transferFormAccounts}
+              transferAccounts={transferFormAccounts}
+              activity={transferFormActivity}
+              open={showTransferForm}
+              onClose={handleTransferFormClose}
+              hidePicker
+            />
+          ))}
 
         <DeleteTransactionsDialog
           open={!!deletingIds && deletingIds.length > 0}
