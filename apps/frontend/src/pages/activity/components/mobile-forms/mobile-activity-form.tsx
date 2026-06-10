@@ -537,6 +537,12 @@ export function MobileActivityForm({
               ? activity.id
               : activity?.counterpartActivityId);
 
+          if (id && (!transferOutId || !transferInId)) {
+            throw new Error(
+              "Use Link transfer... to pair this existing transfer before saving it as internal.",
+            );
+          }
+
           await saveInternalTransferPairMutation.mutateAsync({
             transferOutId: id ? transferOutId : undefined,
             transferInId: id ? transferInId : undefined,
