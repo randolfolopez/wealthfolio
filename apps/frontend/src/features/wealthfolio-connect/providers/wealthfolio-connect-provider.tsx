@@ -287,13 +287,14 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         await storeTokens(data.session);
         setSession(data.session);
         setUser(data.session.user);
+        clearProcessedAuthCodes();
         logger.info("Auth callback completed successfully");
       } catch (err) {
         logger.error(`Error in handleAuthCallback: ${err instanceof Error ? err.message : err}`);
         setError(err instanceof Error ? err.message : "Failed to complete sign in");
       }
     },
-    [supabase, storeTokens],
+    [supabase, storeTokens, clearProcessedAuthCodes],
   );
 
   // Restore session from stored tokens on mount
@@ -377,7 +378,11 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
             void handleAuthCallback(url);
           }
         });
+      } catch (_err) {
+        logger.error("Failed to set up deep link listener.");
+      }
 
+      try {
         const currentUrls = await getCurrentDeepLinks();
         if (cancelled) return;
 
@@ -387,7 +392,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           }
         }
       } catch (_err) {
-        logger.error("Failed to set up deep link listener.");
+        logger.error("Failed to read startup deep links.");
       }
     };
 
