@@ -44,51 +44,6 @@ impl<'a> CurrentAccountValuationService<'a> {
         }
     }
 
-    pub async fn get_current_account_valuations(
-        &self,
-        account_ids: &[String],
-        base_currency: &str,
-        latest_snapshot_cutoff: NaiveDate,
-    ) -> Result<Vec<CurrentAccountValuation>> {
-        self.get_current_account_valuations_at(
-            account_ids,
-            base_currency,
-            latest_snapshot_cutoff,
-            Utc::now(),
-        )
-        .await
-    }
-
-    pub async fn get_current_account_valuations_at(
-        &self,
-        account_ids: &[String],
-        base_currency: &str,
-        latest_snapshot_cutoff: NaiveDate,
-        calculated_at: DateTime<Utc>,
-    ) -> Result<Vec<CurrentAccountValuation>> {
-        let accounts = self.resolve_accounts(account_ids)?;
-        if accounts.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let account_ids: Vec<String> = accounts.iter().map(|account| account.id.clone()).collect();
-        let snapshots =
-            self.latest_snapshots_with_positions(&account_ids, latest_snapshot_cutoff)?;
-        let assets_by_id = self.load_assets_by_id(&snapshots).await?;
-        let latest_quote_pairs = self.load_latest_quotes(&snapshots, &assets_by_id)?;
-        let mut fx_cache = FxRateCache::new(self.fx_service);
-
-        Ok(calculate_current_account_valuations_from_snapshots(
-            &accounts,
-            &snapshots,
-            &assets_by_id,
-            &latest_quote_pairs,
-            base_currency,
-            calculated_at,
-            |from, to| fx_cache.get(from, to),
-        ))
-    }
-
     pub async fn get_current_valuation_for_scope(
         &self,
         scope_id: &str,
@@ -143,20 +98,6 @@ impl<'a> CurrentAccountValuationService<'a> {
             calculated_at,
             include_accounts,
             |from, to| fx_cache.get(from, to),
-        ))
-    }
-
-    fn resolve_accounts(&self, account_ids: &[String]) -> Result<Vec<Account>> {
-        if account_ids.is_empty() {
-            let accounts = self.account_service.get_active_accounts()?;
-            return Ok(filter_current_valuation_accounts(None, accounts));
-        }
-
-        let requested_ids = unique_account_ids(account_ids.iter().cloned());
-        let accounts = self.account_service.get_accounts_by_ids(&requested_ids)?;
-        Ok(filter_current_valuation_accounts(
-            Some(&requested_ids),
-            accounts,
         ))
     }
 
@@ -232,38 +173,6 @@ impl<'a> CurrentAccountValuationService<'a> {
 
         self.quote_service.get_latest_quotes_pair(&asset_ids)
     }
-}
-
-pub fn calculate_current_account_valuations_from_snapshots<F>(
-    accounts: &[Account],
-    snapshots: &HashMap<String, AccountStateSnapshot>,
-    assets_by_id: &HashMap<String, Asset>,
-    latest_quote_pairs: &HashMap<String, LatestQuotePair>,
-    base_currency: &str,
-    calculated_at: DateTime<Utc>,
-    mut latest_rate: F,
-) -> Vec<CurrentAccountValuation>
-where
-    F: FnMut(&str, &str) -> Decimal,
-{
-    accounts
-        .iter()
-        .map(|account| {
-            let Some(snapshot) = snapshots.get(&account.id) else {
-                return zero_current_account_valuation(account, base_currency, calculated_at);
-            };
-
-            calculate_account_snapshot_valuation(
-                account,
-                snapshot,
-                assets_by_id,
-                latest_quote_pairs,
-                base_currency,
-                calculated_at,
-                &mut latest_rate,
-            )
-        })
-        .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -393,30 +302,6 @@ pub fn unique_account_ids(account_ids: impl IntoIterator<Item = String>) -> Vec<
         .collect()
 }
 
-fn calculate_account_snapshot_valuation<F>(
-    account: &Account,
-    snapshot: &AccountStateSnapshot,
-    assets_by_id: &HashMap<String, Asset>,
-    latest_quote_pairs: &HashMap<String, LatestQuotePair>,
-    base_currency: &str,
-    calculated_at: DateTime<Utc>,
-    latest_rate: &mut F,
-) -> CurrentAccountValuation
-where
-    F: FnMut(&str, &str) -> Decimal,
-{
-    calculate_account_snapshot_valuation_with_contributions(
-        account,
-        snapshot,
-        assets_by_id,
-        latest_quote_pairs,
-        base_currency,
-        calculated_at,
-        latest_rate,
-    )
-    .valuation
-}
-
 struct AccountValuationComputation {
     valuation: CurrentAccountValuation,
     holdings_count: usize,
@@ -445,16 +330,27 @@ where
     let mut cash_local_totals: HashMap<String, Decimal> = HashMap::new();
 
     for (cash_currency, amount) in &snapshot.cash_balances {
-        let account_value = *amount * latest_rate(cash_currency, &account.currency);
-        let base_value = *amount * latest_rate(cash_currency, base_currency);
+        let (normalized_amount, normalized_cash_currency) =
+            normalize_amount(*amount, cash_currency);
+        let account_value =
+            normalized_amount * latest_rate(normalized_cash_currency, &account.currency);
+        let base_value = normalized_amount * latest_rate(normalized_cash_currency, base_currency);
         valuation.cash_balance += account_value;
         valuation.cash_balance_base += base_value;
 
-        if !amount.is_zero() {
+        if !normalized_amount.is_zero() {
             holdings_count += 1;
-            add_total(&mut currency_base_totals, cash_currency, base_value);
-            add_total(&mut cash_base_totals, cash_currency, base_value);
-            add_total(&mut cash_local_totals, cash_currency, *amount);
+            add_total(
+                &mut currency_base_totals,
+                normalized_cash_currency,
+                base_value,
+            );
+            add_total(&mut cash_base_totals, normalized_cash_currency, base_value);
+            add_total(
+                &mut cash_local_totals,
+                normalized_cash_currency,
+                normalized_amount,
+            );
         }
     }
 
@@ -503,7 +399,7 @@ where
         valuation.investment_market_value_base += market_value_base;
         add_total(
             &mut currency_base_totals,
-            &position.currency,
+            normalized_quote_currency,
             market_value_base,
         );
     }

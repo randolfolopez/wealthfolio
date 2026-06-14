@@ -19,8 +19,8 @@ use wealthfolio_core::{
             ManualHoldingInput, ManualSnapshotRequest, ManualSnapshotService, SnapshotSource,
         },
         valuation::{
-            CurrentAccountValuation, CurrentAccountValuationService, CurrentValuationResponse,
-            DailyAccountValuation, ValuationRecalcMode,
+            CurrentAccountValuationService, CurrentValuationResponse, DailyAccountValuation,
+            ValuationRecalcMode,
         },
     },
 };
@@ -29,11 +29,10 @@ use crate::{api::shared::holdings_account_ids, error::ApiResult, main_lib::AppSt
 
 use super::dto::{
     AccountIdQuery, AllocationFilterBody, AllocationHoldingsQuery, AssetHoldingsQuery,
-    AssetLotsQuery, CheckHoldingsImportRequest, CheckHoldingsImportResult,
-    CurrentAccountValuationsBody, CurrentValuationBody, DeleteSnapshotQuery, FilterBody,
-    HistoryFilterBody, HistoryQuery, HoldingItemQuery, HoldingsSnapshotInput,
-    ImportHoldingsCsvRequest, ImportHoldingsCsvResult, SaveManualHoldingsRequest,
-    SnapshotDateQuery, SnapshotInfo, SnapshotsQuery, SymbolCheckResult,
+    AssetLotsQuery, CheckHoldingsImportRequest, CheckHoldingsImportResult, CurrentValuationBody,
+    DeleteSnapshotQuery, FilterBody, HistoryFilterBody, HistoryQuery, HoldingItemQuery,
+    HoldingsSnapshotInput, ImportHoldingsCsvRequest, ImportHoldingsCsvResult,
+    SaveManualHoldingsRequest, SnapshotDateQuery, SnapshotInfo, SnapshotsQuery, SymbolCheckResult,
 };
 use super::mappers::{parse_date, parse_date_optional, snapshot_source_to_string};
 
@@ -316,27 +315,6 @@ pub async fn get_latest_valuations(
     }
     let vals = state.valuation_service.get_latest_valuations(&ids)?;
     Ok(Json(vals))
-}
-
-pub async fn get_current_account_valuations(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<CurrentAccountValuationsBody>,
-) -> ApiResult<Json<Vec<CurrentAccountValuation>>> {
-    let base_currency = state.base_currency.read().unwrap().clone();
-    let timezone = state.timezone.read().unwrap().clone();
-    let today = user_today(parse_user_timezone_or_default(&timezone));
-    let latest_snapshot_cutoff = today.succ_opt().unwrap_or(today);
-    let service = CurrentAccountValuationService::new(
-        state.account_service.as_ref(),
-        state.snapshot_repository.as_ref(),
-        state.asset_service.as_ref(),
-        state.quote_service.as_ref(),
-        state.fx_service.as_ref(),
-    );
-    let valuations = service
-        .get_current_account_valuations(&body.account_ids, &base_currency, latest_snapshot_cutoff)
-        .await?;
-    Ok(Json(valuations))
 }
 
 pub async fn get_current_valuation(

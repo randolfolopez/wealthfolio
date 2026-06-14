@@ -168,7 +168,6 @@ export {
   getHoldings,
   getHoldingsByAllocation,
   getIncomeSummary,
-  getCurrentAccountValuations,
   getCurrentValuation,
   getLatestValuations,
   getPortfolioAllocations,

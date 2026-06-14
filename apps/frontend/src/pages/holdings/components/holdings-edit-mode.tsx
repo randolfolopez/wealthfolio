@@ -342,7 +342,6 @@ export const HoldingsEditMode = ({
       queryClient.invalidateQueries({ queryKey: [QueryKeys.HISTORY_VALUATION] });
       queryClient.invalidateQueries({ queryKey: [QueryKeys.latestValuations] });
       queryClient.invalidateQueries({ queryKey: [QueryKeys.CURRENT_VALUATION] });
-      queryClient.invalidateQueries({ queryKey: [QueryKeys.CURRENT_ACCOUNT_VALUATIONS] });
       // Invalidate manual snapshots query
       queryClient.invalidateQueries({ queryKey: QueryKeys.manualSnapshots(account.id) });
       toast.success("Holdings updated successfully");
@@ -376,7 +375,6 @@ export const HoldingsEditMode = ({
       queryClient.invalidateQueries({ queryKey: [QueryKeys.HISTORY_VALUATION] });
       queryClient.invalidateQueries({ queryKey: [QueryKeys.latestValuations] });
       queryClient.invalidateQueries({ queryKey: [QueryKeys.CURRENT_VALUATION] });
-      queryClient.invalidateQueries({ queryKey: [QueryKeys.CURRENT_ACCOUNT_VALUATIONS] });
       queryClient.invalidateQueries({ queryKey: QueryKeys.manualSnapshots(account.id) });
       toast.success("Snapshot deleted successfully");
       onClose();

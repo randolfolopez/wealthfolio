@@ -78,7 +78,13 @@ vi.mock("./accounts-summary", () => ({
 }));
 
 vi.mock("./balance", () => ({
-  default: ({ targetValue }: { targetValue: number }) => <div>{`balance:${targetValue}`}</div>,
+  default: ({
+    targetValue,
+    isUnavailable,
+  }: {
+    targetValue: number;
+    isUnavailable?: boolean;
+  }) => <div>{isUnavailable ? "balance:N/A" : `balance:${targetValue}`}</div>,
 }));
 
 vi.mock("./goals", () => ({
@@ -220,5 +226,44 @@ describe("DashboardContent", () => {
     expect(screen.queryByText("balance:100")).not.toBeInTheDocument();
     expect(screen.getByTestId("portfolio-as-of")).toHaveTextContent("2026-06-01T12:30:00Z");
     expect(screen.getByTestId("portfolio-as-of")).not.toHaveTextContent("2026-06-01T13:00:00Z");
+  });
+
+  it("does not render a failed current valuation as zero", () => {
+    mockUseCurrentValuation.mockReturnValue({
+      currentValuation: undefined,
+      isLoading: false,
+      error: new Error("current valuation failed"),
+    } as unknown as ReturnType<typeof useCurrentValuation>);
+    mockUseHoldings.mockReturnValue({
+      holdings: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useHoldings>);
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [
+        {
+          valuationDate: "2026-06-01",
+          totalValueBase: 1000,
+          netContributionBase: 900,
+          baseCurrency: "USD",
+          calculatedAt: "2026-06-01T12:00:00Z",
+        },
+      ],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseSettingsContext.mockReturnValue({
+      settings: { baseCurrency: "USD" },
+    } as unknown as ReturnType<typeof useSettingsContext>);
+    mockUseQuery.mockReturnValue({
+      isLoading: false,
+      data: null,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    render(<DashboardContent />);
+
+    expect(screen.getByText("balance:N/A")).toBeInTheDocument();
+    expect(screen.queryByText("balance:0")).not.toBeInTheDocument();
+    expect(screen.getByTestId("portfolio-as-of")).toHaveTextContent("");
   });
 });

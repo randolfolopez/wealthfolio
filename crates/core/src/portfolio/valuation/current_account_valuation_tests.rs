@@ -9,7 +9,6 @@ use crate::{
     portfolio::{
         snapshot::{AccountStateSnapshot, Position, SnapshotSource},
         valuation::{
-            calculate_current_account_valuations_from_snapshots,
             calculate_current_valuation_response_from_snapshots, filter_current_valuation_accounts,
             unique_account_ids, DailyAccountValuation, ExternalFlowSource,
         },
@@ -161,6 +160,7 @@ fn latest_rate(from: &str, to: &str) -> Decimal {
         ("CAD", "USD") => dec!(0.8),
         ("EUR", "USD") => dec!(1.1),
         ("EUR", "CAD") => dec!(1.375),
+        ("GBP", "USD") => dec!(1.25),
         _ => Decimal::ONE,
     }
 }
@@ -204,15 +204,18 @@ fn current_account_valuation_uses_latest_snapshot_positions_without_mutating_dai
         ),
     ]);
 
-    let current = calculate_current_account_valuations_from_snapshots(
+    let response = calculate_current_valuation_response_from_snapshots(
+        "account:acc-1",
         &[account],
         &snapshots,
         &assets,
         &quotes,
         "USD",
         calculated_at,
+        true,
         latest_rate,
     );
+    let current = &response.accounts;
 
     assert_eq!(current.len(), 1);
     assert_eq!(current[0].account_id, "acc-1");
@@ -258,15 +261,18 @@ fn current_account_valuation_includes_security_and_cash_excludes_asset_kind_alte
         ("HOUSE".to_string(), quote_pair("HOUSE", dec!(900), "USD")),
     ]);
 
-    let current = calculate_current_account_valuations_from_snapshots(
+    let response = calculate_current_valuation_response_from_snapshots(
+        "account:acc-1",
         &[account],
         &snapshots,
         &assets,
         &quotes,
         "USD",
         calculated_at,
+        true,
         latest_rate,
     );
+    let current = &response.accounts;
 
     assert_eq!(current[0].investment_market_value_base, dec!(100));
     assert_eq!(current[0].cash_balance_base, dec!(25));
@@ -328,19 +334,81 @@ fn current_valuation_response_excludes_expired_options() {
 }
 
 #[test]
+fn current_valuation_response_normalizes_minor_currency_splits() {
+    let account = account("acc-1", "USD");
+    let calculated_at = DateTime::<Utc>::from_timestamp(1_776_480_000, 0).unwrap();
+    let snapshots = HashMap::from([(
+        "acc-1".to_string(),
+        snapshot(
+            "acc-1",
+            "USD",
+            HashMap::from([(
+                "VOD".to_string(),
+                position("acc-1", "VOD", dec!(2), "GBp", false),
+            )]),
+            HashMap::from([("GBp".to_string(), dec!(100))]),
+        ),
+    )]);
+    let assets = HashMap::from([("VOD".to_string(), asset("VOD", AssetKind::Investment))]);
+    let quotes = HashMap::from([("VOD".to_string(), quote_pair("VOD", dec!(500), "GBp"))]);
+
+    let response = calculate_current_valuation_response_from_snapshots(
+        "account:acc-1",
+        &[account],
+        &snapshots,
+        &assets,
+        &quotes,
+        "USD",
+        calculated_at,
+        true,
+        latest_rate,
+    );
+
+    assert_eq!(response.summary.investment_market_value_base, dec!(12.5));
+    assert_eq!(response.summary.cash_balance_base, dec!(1.25));
+    assert_eq!(response.summary.total_value_base, dec!(13.75));
+    assert!(response
+        .summary
+        .currency_split
+        .iter()
+        .all(|split| split.currency != "GBp"));
+
+    let gbp_split = response
+        .summary
+        .currency_split
+        .iter()
+        .find(|split| split.currency == "GBP")
+        .expect("GBP currency split");
+    assert_eq!(gbp_split.value_base, dec!(13.75));
+    assert_eq!(gbp_split.value_local, None);
+
+    let gbp_cash_split = response
+        .summary
+        .cash_currency_split
+        .iter()
+        .find(|split| split.currency == "GBP")
+        .expect("GBP cash split");
+    assert_eq!(gbp_cash_split.value_base, dec!(1.25));
+    assert_eq!(gbp_cash_split.value_local, Some(dec!(1)));
+}
+
+#[test]
 fn current_account_valuation_returns_zero_for_no_snapshot() {
     let account = account("empty", "USD");
     let calculated_at = DateTime::<Utc>::from_timestamp(1_776_480_000, 0).unwrap();
 
-    let current = calculate_current_account_valuations_from_snapshots(
+    let response = calculate_current_valuation_response_from_snapshots(
+        "account:empty",
         &[account],
         &HashMap::new(),
         &HashMap::new(),
         &HashMap::new(),
         "USD",
         calculated_at,
+        true,
         latest_rate,
     );
+    let current = &response.accounts;
 
     assert_eq!(current[0].account_id, "empty");
     assert_eq!(current[0].total_value, Decimal::ZERO);

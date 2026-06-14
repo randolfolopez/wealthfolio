@@ -85,8 +85,11 @@ export function DashboardContent() {
   const [isAllTime, setIsAllTime] = useState<boolean>(() => intervalCode === "ALL");
 
   const { holdings: allHoldings, isLoading: isHoldingsLoading } = useHoldings({ type: "all" });
-  const { currentValuation: portfolioCurrentValuation, isLoading: isCurrentValuationLoading } =
-    useCurrentValuation({ type: "all" }, { includeAccounts: true });
+  const {
+    currentValuation: portfolioCurrentValuation,
+    isLoading: isCurrentValuationLoading,
+    error: currentValuationError,
+  } = useCurrentValuation({ type: "all" }, { includeAccounts: true });
   const { triggerHaptic } = useHapticFeedback();
 
   // Filter holdings for display (exclude alternative assets and cash for TopHoldings)
@@ -131,9 +134,13 @@ export function DashboardContent() {
 
   const gainLossAmount = performancePeriodPnl(portfolioPerformance);
   const simpleReturn = performanceHeadlineReturn(portfolioPerformance);
+  const isCurrentValuationUnavailable =
+    !isCurrentValuationLoading && !portfolioCurrentValuation && Boolean(currentValuationError);
   const portfolioSourceDataAsOf =
     portfolioCurrentValuation?.summary.sourceDataAsOf ??
-    valuationHistory?.[valuationHistory.length - 1]?.calculatedAt;
+    (!isCurrentValuationUnavailable
+      ? valuationHistory?.[valuationHistory.length - 1]?.calculatedAt
+      : undefined);
 
   const chartData = useMemo(() => {
     return (
@@ -177,6 +184,7 @@ export function DashboardContent() {
             <div>
               <Balance
                 isLoading={isCurrentValuationLoading}
+                isUnavailable={isCurrentValuationUnavailable}
                 targetValue={totalValue}
                 currency={baseCurrency}
                 displayCurrency={true}

@@ -31,10 +31,7 @@ use wealthfolio_core::{
     portfolios::{AccountScope, ResolvedAccountScope},
     quotes::MarketSyncMode,
     utils::time_utils::{parse_user_timezone_or_default, user_today},
-    valuation::{
-        CurrentAccountValuation, CurrentAccountValuationService, CurrentValuationResponse,
-        DailyAccountValuation,
-    },
+    valuation::{CurrentAccountValuationService, CurrentValuationResponse, DailyAccountValuation},
 };
 
 // ============================================================================
@@ -547,39 +544,6 @@ pub async fn get_latest_valuations(
     state
         .valuation_service()
         .get_latest_valuations(&ids_to_process)
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn get_current_account_valuations(
-    state: State<'_, Arc<ServiceContext>>,
-    account_ids: Vec<String>,
-) -> Result<Vec<CurrentAccountValuation>, String> {
-    debug!(
-        "Get current account valuations for accounts: {:?}",
-        account_ids
-    );
-
-    let base_currency = state.get_base_currency();
-    let timezone = state.get_timezone();
-    let today = user_today(parse_user_timezone_or_default(&timezone));
-    let latest_snapshot_cutoff = today.succ_opt().unwrap_or(today);
-    let account_service = state.account_service();
-    let snapshot_repository = state.snapshot_repository();
-    let asset_service = state.asset_service();
-    let quote_service = state.quote_service();
-    let fx_service = state.fx_service();
-    let service = CurrentAccountValuationService::new(
-        account_service.as_ref(),
-        snapshot_repository.as_ref(),
-        asset_service.as_ref(),
-        quote_service.as_ref(),
-        fx_service.as_ref(),
-    );
-
-    service
-        .get_current_account_valuations(&account_ids, &base_currency, latest_snapshot_cutoff)
-        .await
         .map_err(|e| e.to_string())
 }
 

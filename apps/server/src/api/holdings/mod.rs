@@ -31,10 +31,6 @@ pub fn router() -> Router<Arc<AppState>> {
             "/valuations/current/query",
             post(handlers::get_current_valuation),
         )
-        .route(
-            "/holdings/valuations/current",
-            post(handlers::get_current_account_valuations),
-        )
         .route("/allocations", get(handlers::get_allocations_for_account))
         .route(
             "/allocations/query",
